@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>2秒ログ</title>
+<meta name="description" content="1日を2秒ずつ撮って、1本の動画につなげる。動画はこの端末の中だけに保存します。">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="2秒ログ">
+<meta name="theme-color" content="#111310">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<style>
+/* Dark camera-app look on purpose (single theme). No external fonts or requests: everything stays on the phone.
+   Layout: day tape → viewfinder → shutter row → contact sheet → export panel. */
+:root{
+  --bg:#111310; --surface:#1b1e1a; --ink:#ecefe8; --muted:#9ba196; --line:#2d312b;
+  --tape:#f0bf1a; --tape-ink:#1d1a0c; --rec:#ff4b33; --frame:#050605;
+  --f-display:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
+  --f-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink)}
+body{font-family:var(--f-display);font-size:15px;line-height:1.6;-webkit-tap-highlight-color:transparent;
+  padding:calc(env(safe-area-inset-top,0px) + 12px) 16px calc(env(safe-area-inset-bottom,0px) + 40px)}
+.app{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+button,label.btn{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,label.btn:focus-within{outline:3px solid var(--tape);outline-offset:2px}
+[hidden]{display:none!important}
+
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+h1{font-weight:900;font-size:26px;line-height:1;margin:0;letter-spacing:.02em}
+h1 span{color:var(--rec)}
+.lock{font-size:11px;color:var(--muted);font-family:var(--f-mono)}
+
+.daybar{display:grid;grid-template-columns:44px 1fr 44px;align-items:center;gap:8px;background:var(--tape);color:var(--tape-ink);border-radius:6px;padding:6px}
+.daybar button{background:none;border:0;font-size:24px;line-height:1;height:40px;border-radius:4px}
+.daybar button:disabled{opacity:.25;cursor:default}
+.daybar .mid{text-align:center;min-width:0}
+#dayLabel{font-family:var(--f-mono);font-weight:700;font-size:19px;letter-spacing:.04em;font-variant-numeric:tabular-nums}
+#dayMeta{font-size:11px;letter-spacing:.06em}
+.days{display:flex;gap:6px;overflow-x:auto;margin-top:-10px}
+.days:empty{display:none}
+.days button{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:2px 10px;font-family:var(--f-mono);font-size:12px}
+.days button[aria-current="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+
+/* viewfinder */
+.vf{position:relative;width:100%;max-width:100%;aspect-ratio:3/4;max-height:56vh;margin:0 auto;background:var(--frame);border-radius:10px;overflow:hidden}
+.vf video{width:100%;height:100%;object-fit:cover;display:block}
+.vf video.mirror{transform:scaleX(-1)}
+.vf .off{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--muted);font-size:13px;text-align:center;padding:16px}
+.vf .off button{background:var(--ink);color:var(--bg);border:0;border-radius:99px;padding:10px 20px;font-weight:700}
+.vf .recbar{position:absolute;left:0;top:0;height:5px;background:var(--rec);width:0}
+.vf .tc{position:absolute;left:10px;top:12px;font-family:var(--f-mono);font-weight:700;font-size:13px;background:rgba(0,0,0,.5);padding:1px 7px;border-radius:3px}
+.vf .tc.on::before{content:"● ";color:var(--rec)}
+.vf .flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .35s}
+.vf .flash.go{opacity:.55;transition:none}
+
+.controls{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px}
+.side{justify-self:center;width:52px;height:52px;border-radius:50%;border:1.5px solid var(--line);background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:12px;line-height:1.2;text-align:center}
+.shutter{width:84px;height:84px;border-radius:50%;border:4px solid var(--ink);background:transparent;padding:6px}
+.shutter i{display:block;width:100%;height:100%;border-radius:50%;background:var(--rec);transition:transform .2s,border-radius .2s}
+.shutter.busy i{transform:scale(.55);border-radius:10px}
+.shutter:disabled{opacity:.4}
+.hint{font-size:12px;color:var(--muted);margin:-6px 0 0;text-align:center}
+.toast{align-self:center;margin:0;background:var(--tape);color:var(--tape-ink);font-family:var(--f-mono);font-weight:700;font-size:13px;padding:3px 12px;border-radius:4px}
+
+.sheet-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
+.count{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+#grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:10px;background:var(--frame);padding:10px 6px;border-radius:4px;
+  background-image:radial-gradient(circle,var(--bg) 2.2px,transparent 2.6px),radial-gradient(circle,var(--bg) 2.2px,transparent 2.6px);
+  background-size:14px 10px;background-position:0 0,0 100%;background-repeat:repeat-x}
+#grid:empty{display:none}
+.clip{position:relative;aspect-ratio:9/16;max-width:100%;border:0;padding:0;background:#2a2d28;border-radius:2px;overflow:hidden;margin-block:6px}
+.clip img{width:100%;height:100%;object-fit:cover;display:block}
+.clip .t{position:absolute;left:4px;bottom:4px;background:var(--tape);color:var(--tape-ink);font-family:var(--f-mono);font-size:11px;font-weight:700;padding:0 4px;border-radius:2px}
+.empty{margin-top:10px;border:1.5px dashed var(--line);border-radius:6px;padding:18px 16px;text-align:center;color:var(--muted);font-size:13px}
+
+.build{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.row .lbl{font-size:12px;color:var(--muted);width:3.5em;flex:none}
+.chip{border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:6px 12px;font-size:13px}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.primary{height:52px;border-radius:8px;border:0;background:var(--tape);color:var(--tape-ink);font-weight:700;font-size:16px;letter-spacing:.06em}
+.primary:disabled{opacity:.4}
+.secondary{height:46px;border-radius:8px;border:1.5px solid var(--ink);background:transparent;font-weight:700}
+.danger-link{background:none;border:0;color:var(--rec);font-size:13px;min-height:36px;text-decoration:underline;text-underline-offset:3px}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--rec);transition:width .2s}
+.prog{display:flex;flex-direction:column;gap:6px}
+.prog p,.note{margin:0;font-size:12px;color:var(--muted)}
+#result{width:100%;max-height:70vh;background:var(--frame);border-radius:6px}
+.foot{font-size:12px;color:var(--muted);margin:0;display:flex;flex-direction:column;gap:6px}
+.foot .bar i{background:var(--ink)}
+
+.overlay{position:fixed;inset:0;background:rgba(5,6,5,.85);z-index:10;display:flex;align-items:flex-end;justify-content:center}
+.panel{background:var(--surface);width:100%;max-width:560px;border-radius:14px 14px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:12px;max-height:100%;overflow:auto}
+.panel video{width:100%;max-height:55vh;background:var(--frame);border-radius:6px;object-fit:contain}
+.field{display:flex;align-items:center;gap:10px;font-size:13px}
+.field input{font:inherit;font-family:var(--f-mono);border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:6px;padding:6px 8px;min-width:0;flex:1}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.actions .danger-link{grid-column:1/-1}
+#engineWrap{position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-events:none;overflow:hidden}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>2秒ログ<span>●</span></h1>
+    <span class="lock">この端末だけに保存</span>
+  </header>
+
+  <div class="daybar">
+    <button id="prevDay" aria-label="前の日">‹</button>
+    <div class="mid"><div id="dayLabel">—</div><div id="dayMeta">—</div></div>
+    <button id="nextDay" aria-label="次の日">›</button>
+  </div>
+  <div class="days" id="days"></div>
+
+  <div class="vf">
+    <video id="vf" playsinline muted autoplay></video>
+    <div class="off" id="camOff">
+      <span id="camMsg">カメラを使うと、ボタンひとつで2秒だけ撮れます。</span>
+      <button id="camStart">カメラを使う</button>
+    </div>
+    <i class="recbar" id="recbar"></i>
+    <span class="tc" id="recTc" hidden>0.0s</span>
+    <div class="flash" id="flash"></div>
+  </div>
+
+  <div class="controls">
+    <label class="btn side" for="pickInput" aria-label="写真アプリの動画から追加">動画<br>追加</label>
+    <input id="pickInput" type="file" accept="video/*" multiple hidden>
+    <button class="shutter" id="shutter" aria-label="2秒撮る"><i></i></button>
+    <button class="side" id="flipBtn" aria-label="カメラを切り替え">切替</button>
+  </div>
+  <p class="hint">押すと2秒だけ録画して、自動で止まります。</p>
+  <p class="toast" id="toast" role="status" hidden></p>
+
+  <section>
+    <div class="sheet-h"><h2>この日のクリップ</h2><span class="count" id="count"></span></div>
+    <div id="grid"></div>
+    <div class="empty" id="empty">まだクリップがありません。赤いボタンで最初の2秒を。</div>
+  </section>
+
+  <section class="build">
+    <h2>この日の動画を作る</h2>
+    <div class="row" role="group" aria-label="画面の形"><span class="lbl">形</span>
+      <button class="chip" data-shape="v" aria-pressed="true">縦 9:16</button>
+      <button class="chip" data-shape="s" aria-pressed="false">正方形</button>
+      <button class="chip" data-shape="h" aria-pressed="false">横 16:9</button>
+    </div>
+    <div class="row"><span class="lbl">入れる</span>
+      <button class="chip" data-opt="stamp" aria-pressed="true">時刻</button>
+      <button class="chip" data-opt="title" aria-pressed="true">冒頭に日付</button>
+      <button class="chip" data-opt="sound" aria-pressed="true">音</button>
+    </div>
+    <button class="primary" id="buildBtn" disabled>書き出す</button>
+    <div class="prog" id="prog" hidden><div class="bar"><i id="barFill"></i></div><p id="progText"></p></div>
+    <video id="result" controls playsinline hidden></video>
+    <button class="secondary" id="saveBtn" hidden>写真アプリに保存</button>
+    <p class="note" id="saveNote" hidden></p>
+    <button class="danger-link" id="cleanBtn" hidden>この日のクリップを消して空きをつくる</button>
+    <p class="note">書き出しは実際の長さぶん再生しながら作ります（10クリップで約20秒）。画面を開いたまま待ってください。</p>
+  </section>
+
+  <div class="foot">
+    <div class="bar"><i id="usageFill"></i></div>
+    <span id="usageText">—</span>
+    <span>動画はこのスマホの中だけに保存され、どこにも送信されません。ホーム画面のアイコンから開いてください（Safariで開くと別の保存場所になります）。</span>
+  </div>
+</div>
+
+<div class="overlay" id="sheet" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-h"><h2 id="sheetTitle">クリップ</h2><span class="count" id="sheetTime"></span></div>
+    <video id="pv" playsinline loop controls></video>
+    <div class="field"><label for="tsInput">撮った日時</label><input type="datetime-local" id="tsInput" step="60"></div>
+    <div class="actions">
+      <button class="secondary" id="closeBtn">閉じる</button>
+      <button class="primary" id="okBtn">保存</button>
+      <button class="danger-link" id="delBtn">このクリップを削除</button>
+    </div>
+  </div>
+</div>
+
+<div id="engineWrap"><video id="eng" playsinline preload="auto"></video><video id="av" playsinline muted preload="auto"></video></div>
+<canvas id="cv" hidden></canvas>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const WD = ['日','月','火','水','木','金','土'], WDE = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
+const pad = n => String(n).padStart(2,'0');
+const dayKey = ts => { const d = new Date(ts); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+const keyToDate = k => { const [y,m,d] = k.split('-').map(Number); return new Date(y, m-1, d); };
+const hm = ts => { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const toLocalInput = ts => `${dayKey(ts)}T${hm(ts)}`;
+const newId = () => `c${Date.now()}${Math.random().toString(36).slice(2,6)}`;
+const ls = { get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }, set(k,v){ try { localStorage.setItem(k,v); } catch(e){} } };
+
+const state = { clips: [], day: dayKey(Date.now()), shape: 'v', opt: { stamp: true, title: true, sound: true } };
+let idb = null, lastBlob = null, lastExt = 'mp4', building = false;
+
+/* ---------- storage: IndexedDB on this phone only ---------- */
+function openDB(){ return new Promise(res => { try { const r = indexedDB.open('two-sec-log', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('clips', { keyPath: 'id' });
+  r.onsuccess = () => res(r.result); r.onerror = () => res(null); r.onblocked = () => res(null);
+} catch(e){ res(null); } }); }
+const tx = (mode, fn) => new Promise((res, rej) => { if (!idb) return rej(new Error('保存場所が使えません')); try {
+  const t = idb.transaction('clips', mode); const r = fn(t.objectStore('clips'));
+  t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+} catch(e){ rej(e); } });
+const getAll = () => tx('readonly', s => s.getAll()).catch(() => []);
+const putClip = c => tx('readwrite', s => s.put(c));
+const delClip = id => tx('readwrite', s => s.delete(id));
+async function saveClip(c){
+  await putClip(c);
+  const i = state.clips.findIndex(x => x.id === c.id); if (i >= 0) state.clips[i] = c; else state.clips.push(c);
+  if (navigator.storage && navigator.storage.persist && !ls.get('persistAsked')) { ls.set('persistAsked','1'); navigator.storage.persist().catch(()=>{}); }
+  refreshUsage();
+}
+async function removeClip(c){ await delClip(c.id); state.clips = state.clips.filter(x => x.id !== c.id); refreshUsage(); }
+const mb = b => b >= 1073741824 ? `${(b/1073741824).toFixed(1)}GB` : `${(b/1048576).toFixed(1)}MB`;
+async function refreshUsage(){
+  const total = state.clips.reduce((s,c) => s + (c.blob ? c.blob.size : 0), 0);
+  let txt = `クリップ ${state.clips.length}本 · ${mb(total)}`;
+  try { if (navigator.storage && navigator.storage.estimate) { const e = await navigator.storage.estimate();
+    if (e.quota) { txt += ` · 空き ${mb(Math.max(0, e.quota - e.usage))}`; $('#usageFill').style.width = `${Math.min(100, Math.round(e.usage / e.quota * 100))}%`; } } } catch(e){}
+  $('#usageText').textContent = txt;
+}
+
+/* ---------- render ---------- */
+const dayClips = () => state.clips.filter(c => c.day === state.day).sort((a,b) => a.ts - b.ts);
+function render(){
+  const d = keyToDate(state.day), cs = dayClips();
+  $('#dayLabel').textContent = `${d.getFullYear()}.${pad(d.getMonth()+1)}.${pad(d.getDate())} ${WD[d.getDay()]}`;
+  $('#dayMeta').textContent = cs.length ? `${cs.length}クリップ · ${cs.reduce((s,c) => s + c.dur, 0).toFixed(0)}秒` : 'クリップなし';
+  $('#nextDay').disabled = state.day >= dayKey(Date.now());
+  $('#count').textContent = cs.length ? `${cs.length} × 2s` : '';
+  const grid = $('#grid'); grid.innerHTML = '';
+  cs.forEach(c => {
+    const b = document.createElement('button'); b.className = 'clip'; b.setAttribute('aria-label', `${hm(c.ts)}のクリップ`);
+    const img = document.createElement('img'); img.alt = ''; if (c.thumb) img.src = c.thumb;
+    const t = document.createElement('span'); t.className = 't'; t.textContent = hm(c.ts);
+    b.append(img, t); b.onclick = () => openSheet(c); grid.append(b);
+  });
+  $('#empty').hidden = cs.length > 0;
+  $('#buildBtn').disabled = !cs.length || building;
+  const counts = {}; state.clips.forEach(c => counts[c.day] = (counts[c.day]||0) + 1);
+  const keys = Object.keys(counts).sort().reverse(), days = $('#days'); days.innerHTML = '';
+  if (keys.length > 1 || (keys.length === 1 && keys[0] !== state.day)) keys.forEach(k => {
+    const b = document.createElement('button'), dd = keyToDate(k);
+    b.textContent = `${dd.getMonth()+1}/${dd.getDate()} ·${counts[k]}`; b.setAttribute('aria-current', k === state.day);
+    b.onclick = () => { state.day = k; resetResult(); render(); }; days.append(b);
+  });
+}
+function shiftDay(n){ const d = keyToDate(state.day); d.setDate(d.getDate()+n); state.day = dayKey(d.getTime()); resetResult(); render(); }
+$('#prevDay').onclick = () => shiftDay(-1);
+$('#nextDay').onclick = () => shiftDay(1);
+let toastT;
+function toast(msg, sticky){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); if (!sticky) toastT = setTimeout(() => t.hidden = true, 2400); }
+
+/* ---------- helpers ---------- */
+function once(el, ev, ms = 4000){ return new Promise(res => { let t; const f = () => { clearTimeout(t); el.removeEventListener(ev, f); res(true); };
+  el.addEventListener(ev, f); t = setTimeout(() => { el.removeEventListener(ev, f); res(false); }, ms); }); }
+const nextFrame = v => new Promise(r => { const t = setTimeout(r, 700); if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => { clearTimeout(t); r(); }); });
+function coverDraw(g, src, W, H, mirror){
+  const sw = src.videoWidth || W, sh = src.videoHeight || H, s = Math.max(W / sw, H / sh), dw = sw * s, dh = sh * s;
+  if (mirror) { g.save(); g.translate(W, 0); g.scale(-1, 1); }
+  g.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
+  if (mirror) g.restore();
+}
+function thumbFrom(src, mirror){
+  const c = document.createElement('canvas'); c.width = 180; c.height = 320;
+  coverDraw(c.getContext('2d'), src, 180, 320, mirror);
+  try { return c.toDataURL('image/jpeg', .72); } catch(e){ return ''; }
+}
+function pickMime(){
+  for (const m of ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm']) {
+    try { if (MediaRecorder.isTypeSupported(m)) return m; } catch(e){}
+  }
+  return '';
+}
+
+/* ---------- camera ---------- */
+const vf = $('#vf');
+let stream = null, facing = ls.get('facing') || 'environment', shooting = false;
+async function startCam(){
+  stopCam();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { $('#camMsg').textContent = 'このブラウザではカメラが使えません。「動画追加」から写真アプリの動画を選べます。'; return false; }
+  const video = { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } };
+  try { stream = await navigator.mediaDevices.getUserMedia({ video, audio: true }); }
+  catch(e) {
+    try { stream = await navigator.mediaDevices.getUserMedia({ video, audio: false }); }
+    catch(e2) { $('#camMsg').textContent = 'カメラを使えませんでした。設定でカメラとマイクを許可してから、もう一度押してください。'; return false; }
+  }
+  vf.srcObject = stream; vf.classList.toggle('mirror', facing === 'user');
+  await vf.play().catch(() => {});
+  $('#camOff').hidden = true; ls.set('camOK', '1');
+  return true;
+}
+function stopCam(){ if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } vf.srcObject = null; $('#camOff').hidden = false; }
+$('#camStart').onclick = startCam;
+$('#flipBtn').onclick = async () => { if (shooting) return; facing = facing === 'user' ? 'environment' : 'user'; ls.set('facing', facing); await startCam(); };
+document.addEventListener('visibilitychange', () => { if (document.hidden) { if (!shooting) stopCam(); } else if (ls.get('camOK') === '1' && !stream) startCam(); });
+
+$('#shutter').onclick = async () => {
+  if (shooting) return;
+  if (!stream && !(await startCam())) return;
+  if (typeof MediaRecorder === 'undefined') { toast('このブラウザは録画に対応していません'); return; }
+  shooting = true; $('#shutter').classList.add('busy');
+  const mime = pickMime();
+  let rec; try { rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 4e6 } : {}); } catch(e){ rec = new MediaRecorder(stream); }
+  const chunks = []; rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  const stopped = new Promise(r => rec.onstop = r);
+  const ts = Date.now(), mirror = facing === 'user';
+  let thumb = '';
+  rec.start();
+  const t0 = performance.now(); $('#recTc').hidden = false; $('#recTc').classList.add('on');
+  await new Promise(res => { const tick = () => {
+    const t = Math.min(2, (performance.now() - t0) / 1000);
+    $('#recbar').style.width = `${t / 2 * 100}%`; $('#recTc').textContent = `${t.toFixed(1)}s`;
+    if (!thumb && t > 0.9) thumb = thumbFrom(vf, mirror);
+    if (t >= 2) return res(); requestAnimationFrame(tick); }; tick(); });
+  rec.stop(); await stopped;
+  $('#recbar').style.width = '0'; $('#recTc').hidden = true; $('#recTc').classList.remove('on');
+  const f = $('#flash'); f.classList.add('go'); requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove('go')));
+  const blob = new Blob(chunks, { type: (rec.mimeType || mime || 'video/mp4').split(';')[0] });
+  if (!thumb) thumb = thumbFrom(vf, mirror);
+  const clip = { id: newId(), ts, day: dayKey(ts), start: 0, dur: 2, thumb, blob };
+  try { await saveClip(clip); state.day = clip.day; resetResult(); render(); toast(`${hm(ts)} 保存しました`); }
+  catch(e){ toast('保存できませんでした。空き容量を確認してください。'); }
+  shooting = false; $('#shutter').classList.remove('busy');
+};
+
+/* ---------- add from the photo library (first 2s) ---------- */
+const av = $('#av');
+async function snapAt(url, start){
+  av.src = url; await once(av, 'loadedmetadata', 8000);
+  let dur = av.duration; if (!isFinite(dur) || dur <= 0) dur = 2;
+  const s = start == null ? Math.min(0.3, Math.max(0, dur - 2)) : start;
+  av.currentTime = s; await once(av, 'seeked', 2500);
+  let thumb = '';
+  const c = document.createElement('canvas'); c.width = 180; c.height = 320; const g = c.getContext('2d');
+  for (let i = 0; i < 4; i++) { // iOS paints a frame only after playback starts
+    try { await av.play(); } catch(e){} await nextFrame(av); av.pause();
+    coverDraw(g, av, 180, 320);
+    try { const d = g.getImageData(0, 0, 180, 320).data; let sum = 0; for (let j = 0; j < d.length; j += 64) sum += d[j] + d[j+1] + d[j+2]; if (sum / (d.length / 64) > 6) break; } catch(e){ break; }
+    await new Promise(r => setTimeout(r, 150));
+  }
+  try { thumb = c.toDataURL('image/jpeg', .72); } catch(e){}
+  av.pause(); av.removeAttribute('src'); av.load();
+  return { dur, start: s, thumb };
+}
+$('#pickInput').onchange = async e => {
+  const files = [...e.target.files].filter(f => f.type.startsWith('video/') || /\.(mov|mp4|m4v|webm)$/i.test(f.name)); e.target.value = '';
+  if (!files.length) return;
+  let last, n = 0;
+  for (const f of files) {
+    toast(files.length > 1 ? `追加中… ${n+1}/${files.length}` : '追加中…', true);
+    const url = URL.createObjectURL(f);
+    try { const r = await snapAt(url, null); const ts = f.lastModified || Date.now();
+      last = { id: newId(), ts, day: dayKey(ts), start: r.start, dur: Math.min(2, r.dur), thumb: r.thumb, blob: f };
+      await saveClip(last); n++; } catch(err){}
+    URL.revokeObjectURL(url);
+  }
+  if (last) { state.day = last.day; resetResult(); render(); }
+  toast(n ? `${n}本 追加しました` : '追加できませんでした');
+};
+
+/* ---------- clip sheet ---------- */
+const pv = $('#pv'); let sheet = null, pvRaf = 0;
+function openSheet(c){
+  sheet = { clip: c, url: URL.createObjectURL(c.blob) };
+  $('#sheetTime').textContent = `${hm(c.ts)} · ${c.dur.toFixed(1)}s`;
+  $('#tsInput').value = toLocalInput(c.ts);
+  $('#delBtn').dataset.armed = ''; $('#delBtn').textContent = 'このクリップを削除';
+  pv.src = sheet.url; pv.currentTime = c.start; pv.play().catch(() => {});
+  cancelAnimationFrame(pvRaf);
+  const loop = () => { if (!sheet) return; if (pv.currentTime >= c.start + c.dur - 0.03 || pv.currentTime < c.start - 0.2) pv.currentTime = c.start; pvRaf = requestAnimationFrame(loop); };
+  pvRaf = requestAnimationFrame(loop);
+  $('#sheet').hidden = false;
+}
+function closeSheet(){ cancelAnimationFrame(pvRaf); pv.pause(); pv.removeAttribute('src'); pv.load(); if (sheet) URL.revokeObjectURL(sheet.url); sheet = null; $('#sheet').hidden = true; }
+$('#closeBtn').onclick = closeSheet;
+$('#okBtn').onclick = async () => {
+  const v = $('#tsInput').value; let ts = v ? new Date(v).getTime() : sheet.clip.ts; if (!isFinite(ts)) ts = sheet.clip.ts;
+  const c = { ...sheet.clip, ts, day: dayKey(ts) };
+  try { await saveClip(c); state.day = c.day; resetResult(); render(); toast('保存しました'); } catch(e){ toast('保存できませんでした'); }
+  closeSheet();
+};
+$('#delBtn').onclick = async () => {
+  const b = $('#delBtn');
+  if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'もう一度押すと削除します'; return; }
+  try { await removeClip(sheet.clip); toast('削除しました'); } catch(e){ toast('削除できませんでした'); }
+  resetResult(); render(); closeSheet();
+};
+
+/* ---------- options ---------- */
+document.querySelectorAll('[data-shape]').forEach(b => b.onclick = () => {
+  state.shape = b.dataset.shape; document.querySelectorAll('[data-shape]').forEach(x => x.setAttribute('aria-pressed', x === b)); resetResult(); });
+document.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => {
+  const k = b.dataset.opt; state.opt[k] = !state.opt[k]; b.setAttribute('aria-pressed', state.opt[k]); resetResult(); });
+
+/* ---------- export ---------- */
+function drawStamp(g, ts, W, H){
+  const u = Math.min(W, H) / 720, d = new Date(ts), x = 40 * u, y = H - 46 * u;
+  g.save(); g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 10 * u; g.fillStyle = '#ffffff'; g.textBaseline = 'alphabetic';
+  g.font = `700 ${56*u}px ui-monospace, Menlo, monospace`; g.fillText(hm(ts), x, y);
+  g.font = `500 ${24*u}px ui-monospace, Menlo, monospace`;
+  g.fillText(`${d.getFullYear()}.${pad(d.getMonth()+1)}.${pad(d.getDate())} ${WDE[d.getDay()]}`, x + 2*u, y - 62*u);
+  g.restore();
+  g.fillStyle = '#ff4b33'; g.beginPath(); g.arc(W - 46*u, 50*u, 10*u, 0, Math.PI*2); g.fill();
+}
+function drawTitle(g, W, H, n, t){
+  const u = Math.min(W, H) / 720, d = keyToDate(state.day);
+  g.fillStyle = '#111310'; g.fillRect(0, 0, W, H); g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = '#f0bf1a'; g.font = `900 ${96*u}px "Hiragino Sans", system-ui, sans-serif`;
+  g.fillText(`${pad(d.getMonth()+1)}.${pad(d.getDate())}`, W/2, H/2 - 30*u);
+  g.fillStyle = '#ecefe8'; g.font = `700 ${28*u}px ui-monospace, Menlo, monospace`;
+  g.fillText(`${d.getFullYear()} ${WDE[d.getDay()]} · ${n} CLIPS`, W/2, H/2 + 50*u);
+  g.fillStyle = '#ff4b33'; g.fillRect(W/2 - 60*u, H/2 + 90*u, 120*u * Math.min(1, t), 4*u); g.textAlign = 'start';
+}
+let ac = null, aDest = null;
+const eng = $('#eng'), cv = $('#cv');
+async function ensureAudio(){
+  try { if (!ac) { ac = new (window.AudioContext || window.webkitAudioContext)(); const src = ac.createMediaElementSource(eng); aDest = ac.createMediaStreamDestination(); src.connect(aDest); }
+    await ac.resume(); } catch(e){}
+}
+const prog = (p, txt) => { $('#prog').hidden = false; $('#barFill').style.width = `${Math.round(p*100)}%`; $('#progText').textContent = txt; };
+function resetResult(){
+  if (building) return;
+  const r = $('#result'); if (r.src) { URL.revokeObjectURL(r.src); r.removeAttribute('src'); r.load(); }
+  r.hidden = true; ['#saveBtn','#saveNote','#prog','#cleanBtn'].forEach(s => $(s).hidden = true); lastBlob = null;
+}
+$('#buildBtn').onclick = async () => {
+  const cs = dayClips(); if (!cs.length || building) return;
+  if (typeof MediaRecorder === 'undefined' || !cv.captureStream) { prog(0, 'このブラウザは書き出しに対応していません。'); return; }
+  resetResult(); building = true; render(); stopCam();
+  const [W, H] = state.shape === 'v' ? [720, 1280] : state.shape === 's' ? [1080, 1080] : [1280, 720];
+  cv.width = W; cv.height = H; const g = cv.getContext('2d');
+  let audio = [];
+  if (state.opt.sound) { await ensureAudio(); audio = aDest ? aDest.stream.getAudioTracks() : []; }
+  const mime = pickMime();
+  const ms = new MediaStream([...cv.captureStream(30).getVideoTracks(), ...audio]);
+  let rec; try { rec = new MediaRecorder(ms, mime ? { mimeType: mime, videoBitsPerSecond: 6e6 } : {}); } catch(e){ rec = new MediaRecorder(ms); }
+  const chunks = []; rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  const stopped = new Promise(r => rec.onstop = r), frame = () => new Promise(r => requestAnimationFrame(r));
+  const canPause = typeof rec.pause === 'function';
+  try {
+    if (state.opt.title) drawTitle(g, W, H, cs.length, 0); else { g.fillStyle = '#000'; g.fillRect(0,0,W,H); }
+    rec.start(500);
+    if (state.opt.title) { const t0 = performance.now(); while (performance.now() - t0 < 1200) { drawTitle(g, W, H, cs.length, (performance.now() - t0) / 1000); await frame(); } }
+    for (let i = 0; i < cs.length; i++) {
+      const c = cs[i]; prog(i / cs.length, `${i+1} / ${cs.length} クリップ  ${hm(c.ts)}`);
+      if (canPause && rec.state === 'recording') rec.pause();
+      const url = URL.createObjectURL(c.blob);
+      eng.muted = !audio.length; eng.src = url;
+      await once(eng, 'loadedmetadata', 6000); eng.currentTime = c.start; await once(eng, 'seeked', 2500);
+      try { await eng.play(); } catch(e){ eng.muted = true; try { await eng.play(); } catch(e2){} }
+      await nextFrame(eng);
+      g.fillStyle = '#000'; g.fillRect(0,0,W,H); coverDraw(g, eng, W, H); if (state.opt.stamp) drawStamp(g, c.ts, W, H);
+      if (canPause && rec.state === 'paused') rec.resume();
+      const end = c.start + c.dur, t0 = performance.now();
+      while (true) {
+        g.fillStyle = '#000'; g.fillRect(0,0,W,H); coverDraw(g, eng, W, H); if (state.opt.stamp) drawStamp(g, c.ts, W, H);
+        if (eng.currentTime >= end - 0.02 || eng.ended || performance.now() - t0 > (c.dur + 3) * 1000) break;
+        await frame();
+      }
+      eng.pause(); URL.revokeObjectURL(url);
+    }
+    rec.stop(); await stopped;
+    const type = (rec.mimeType || mime || 'video/webm').split(';')[0];
+    lastExt = type.includes('mp4') ? 'mp4' : 'webm'; lastBlob = new Blob(chunks, { type });
+    const r = $('#result'); r.src = URL.createObjectURL(lastBlob); r.hidden = false;
+    const secs = cs.reduce((s,c) => s + c.dur, 0) + (state.opt.title ? 1.2 : 0);
+    prog(1, `できました · ${secs.toFixed(1)}秒 · ${mb(lastBlob.size)}`);
+    $('#saveBtn').hidden = false;
+  } catch(e) {
+    try { if (rec.state !== 'inactive') rec.stop(); } catch(_){}
+    prog(0, `書き出しに失敗しました（${e && e.message || e}）。`);
+  } finally { eng.removeAttribute('src'); eng.load(); building = false; render(); }
+};
+$('#saveBtn').onclick = async () => {
+  if (!lastBlob) return;
+  const note = $('#saveNote'), name = `2byo-log-${state.day}.${lastExt}`;
+  const file = new File([lastBlob], name, { type: lastBlob.type });
+  note.hidden = false;
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file] });
+      note.textContent = '共有メニューで「ビデオを保存」を選ぶと写真アプリに入ります。';
+    } else {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(lastBlob); a.download = name; document.body.append(a); a.click(); a.remove();
+      note.textContent = 'ダウンロードしました。';
+    }
+    $('#cleanBtn').hidden = false; $('#cleanBtn').dataset.armed = ''; $('#cleanBtn').textContent = 'この日のクリップを消して空きをつくる';
+  } catch(e) { note.textContent = e && e.name === 'AbortError' ? '保存をやめました。' : '保存できませんでした。'; }
+};
+$('#cleanBtn').onclick = async () => {
+  const b = $('#cleanBtn');
+  if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'もう一度押すと、この日のクリップを全部消します'; return; }
+  let n = 0; for (const c of dayClips()) { try { await removeClip(c); n++; } catch(e){} }
+  b.hidden = true; render(); toast(`${n}本 消しました`);
+};
+
+/* ---------- boot ---------- */
+(async () => {
+  render();
+  idb = await openDB();
+  state.clips = await getAll(); render(); refreshUsage();
+  if (ls.get('camOK') === '1') startCam();
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+})();
+</script>
+</body>
+</html>

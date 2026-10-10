@@ -1,0 +1,17 @@
+{
+  "name": "2秒ログ",
+  "short_name": "2秒ログ",
+  "description": "1日を2秒ずつ撮って、1本の動画につなげる。動画はこの端末の中だけに保存します。",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111310",
+  "theme_color": "#111310",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
