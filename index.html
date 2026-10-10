@@ -50,6 +50,13 @@ h1 span{color:var(--rec)}
 
 /* viewfinder */
 .vf{position:relative;width:100%;max-width:100%;aspect-ratio:3/4;max-height:56vh;margin:0 auto;background:var(--frame);border-radius:10px;overflow:hidden}
+/* landscape mode: show the whole camera, dim everything outside the 16:9 band that gets recorded */
+.vf .frame{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);width:100%;aspect-ratio:16/9;
+  border:2px solid var(--tape);box-shadow:0 0 0 100vmax rgba(0,0,0,.55);pointer-events:none;display:none}
+.vf.land .frame{display:block}
+.vf .frame span{position:absolute;left:6px;bottom:100%;margin-bottom:6px;font-size:11px;font-weight:700;color:var(--tape);white-space:nowrap}
+.camshape{display:flex;justify-content:center;gap:6px;margin-top:-6px}
+.camshape .chip{font-size:12px;padding:4px 12px}
 .vf video{width:100%;height:100%;object-fit:cover;display:block}
 .vf video.mirror{transform:scaleX(-1)}
 .vf .off{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--muted);font-size:13px;text-align:center;padding:16px}
@@ -129,9 +136,15 @@ h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
       <span id="camMsg">カメラを使うと、ボタンひとつで2秒だけ撮れます。</span>
       <button id="camStart">カメラを使う</button>
     </div>
+    <div class="frame" aria-hidden="true"><span>この枠の中が撮れます</span></div>
     <i class="recbar" id="recbar"></i>
     <span class="tc" id="recTc" hidden>0.0s</span>
     <div class="flash" id="flash"></div>
+  </div>
+
+  <div class="camshape" role="group" aria-label="撮る形">
+    <button class="chip" data-cam="v" aria-pressed="true">縦長で撮る</button>
+    <button class="chip" data-cam="h" aria-pressed="false">横長で撮る</button>
   </div>
 
   <div class="controls">
@@ -272,7 +285,7 @@ function once(el, ev, ms = 4000){ return new Promise(res => { let t; const f = (
   el.addEventListener(ev, f); t = setTimeout(() => { el.removeEventListener(ev, f); res(false); }, ms); }); }
 const nextFrame = v => new Promise(r => { const t = setTimeout(r, 700); if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => { clearTimeout(t); r(); }); });
 function coverDraw(g, src, W, H, mirror){
-  const sw = src.videoWidth || W, sh = src.videoHeight || H, s = Math.max(W / sw, H / sh), dw = sw * s, dh = sh * s;
+  const sw = src.videoWidth || src.width || W, sh = src.videoHeight || src.height || H, s = Math.max(W / sw, H / sh), dw = sw * s, dh = sh * s;
   if (mirror) { g.save(); g.translate(W, 0); g.scale(-1, 1); }
   g.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
   if (mirror) g.restore();
@@ -292,10 +305,26 @@ function pickMime(){
 /* ---------- camera ---------- */
 const vf = $('#vf');
 let stream = null, facing = ls.get('facing') || 'environment', shooting = false;
+let camShape = ls.get('camShape') === 'h' ? 'h' : 'v';
+function syncCamShape(){
+  document.querySelectorAll('[data-cam]').forEach(b => b.setAttribute('aria-pressed', b.dataset.cam === camShape));
+  document.querySelector('.vf').classList.toggle('land', camShape === 'h');
+}
+document.querySelectorAll('[data-cam]').forEach(b => b.onclick = async () => {
+  if (shooting || camShape === b.dataset.cam) return;
+  camShape = b.dataset.cam; ls.set('camShape', camShape); syncCamShape();
+  // match the export shape to how clips are shot
+  const want = camShape === 'h' ? 'h' : 'v';
+  state.shape = want; document.querySelectorAll('[data-shape]').forEach(x => x.setAttribute('aria-pressed', x.dataset.shape === want)); resetResult();
+  if (stream) await startCam();
+});
 async function startCam(){
   stopCam();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { $('#camMsg').textContent = 'このブラウザではカメラが使えません。「動画追加」から写真アプリの動画を選べます。'; return false; }
-  const video = { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } };
+  // landscape crop comes out of a portrait frame, so ask for more pixels to keep it sharp
+  const video = camShape === 'h'
+    ? { facingMode: facing, width: { ideal: 3840 }, height: { ideal: 2160 } }
+    : { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } };
   try { stream = await navigator.mediaDevices.getUserMedia({ video, audio: true }); }
   catch(e) {
     try { stream = await navigator.mediaDevices.getUserMedia({ video, audio: false }); }
@@ -317,7 +346,15 @@ $('#shutter').onclick = async () => {
   if (typeof MediaRecorder === 'undefined') { toast('このブラウザは録画に対応していません'); return; }
   shooting = true; $('#shutter').classList.add('busy');
   const mime = pickMime();
-  let rec; try { rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 4e6 } : {}); } catch(e){ rec = new MediaRecorder(stream); }
+  // landscape: draw the middle 16:9 of the camera into a canvas and record that
+  const land = camShape === 'h' && !!document.createElement('canvas').captureStream;
+  let src = stream, cc = null, cg = null;
+  if (land) {
+    cc = document.createElement('canvas'); cc.width = 1920; cc.height = 1080; cg = cc.getContext('2d');
+    coverDraw(cg, vf, cc.width, cc.height);
+    src = new MediaStream([...cc.captureStream(30).getVideoTracks(), ...stream.getAudioTracks()]);
+  }
+  let rec; try { rec = new MediaRecorder(src, mime ? { mimeType: mime, videoBitsPerSecond: land ? 6e6 : 4e6 } : {}); } catch(e){ rec = new MediaRecorder(src); }
   const chunks = []; rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
   const stopped = new Promise(r => rec.onstop = r);
   const ts = Date.now(), mirror = facing === 'user';
@@ -326,14 +363,16 @@ $('#shutter').onclick = async () => {
   const t0 = performance.now(); $('#recTc').hidden = false; $('#recTc').classList.add('on');
   await new Promise(res => { const tick = () => {
     const t = Math.min(2, (performance.now() - t0) / 1000);
+    if (land) coverDraw(cg, vf, cc.width, cc.height);
     $('#recbar').style.width = `${t / 2 * 100}%`; $('#recTc').textContent = `${t.toFixed(1)}s`;
-    if (!thumb && t > 0.9) thumb = thumbFrom(vf, mirror);
+    if (!thumb && t > 0.9) thumb = land ? thumbFrom(cc, false) : thumbFrom(vf, mirror);
     if (t >= 2) return res(); requestAnimationFrame(tick); }; tick(); });
   rec.stop(); await stopped;
   $('#recbar').style.width = '0'; $('#recTc').hidden = true; $('#recTc').classList.remove('on');
   const f = $('#flash'); f.classList.add('go'); requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove('go')));
   const blob = new Blob(chunks, { type: (rec.mimeType || mime || 'video/mp4').split(';')[0] });
-  if (!thumb) thumb = thumbFrom(vf, mirror);
+  if (land) src.getVideoTracks().forEach(t => t.stop());
+  if (!thumb) thumb = land ? thumbFrom(cc, false) : thumbFrom(vf, mirror);
   const clip = { id: newId(), ts, day: dayKey(ts), start: 0, dur: 2, thumb, blob };
   try { await saveClip(clip); state.day = clip.day; resetResult(); render(); toast(`${hm(ts)} 保存しました`); }
   catch(e){ toast('保存できませんでした。空き容量を確認してください。'); }
@@ -513,6 +552,8 @@ $('#cleanBtn').onclick = async () => {
 
 /* ---------- boot ---------- */
 (async () => {
+  syncCamShape();
+  if (camShape === 'h') { state.shape = 'h'; document.querySelectorAll('[data-shape]').forEach(x => x.setAttribute('aria-pressed', x.dataset.shape === 'h')); }
   render();
   idb = await openDB();
   state.clips = await getAll(); render(); refreshUsage();
