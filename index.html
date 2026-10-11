@@ -131,6 +131,10 @@ h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
 .panel video{width:100%;max-height:55vh;background:var(--frame);border-radius:6px;object-fit:contain}
 .field{display:flex;align-items:center;gap:10px;font-size:13px}
 .field input{font:inherit;font-family:var(--f-mono);border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:6px;padding:6px 8px;min-width:0;flex:1}
+.trim{display:flex;flex-direction:column;gap:6px}
+.trim label{display:flex;justify-content:space-between;font-size:13px}
+.trim input{width:100%;accent-color:var(--rec)}
+.longbtn{margin-top:10px;width:100%;height:42px;border-radius:8px;border:1.5px dashed var(--tape);background:transparent;color:var(--tape);font-weight:700;font-size:13px}
 .actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .actions .danger-link{grid-column:1/-1}
 #engineWrap{position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-events:none;overflow:hidden}
@@ -163,10 +167,6 @@ h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
     <div class="flash" id="flash"></div>
   </div>
 
-  <div class="camshape" role="group" aria-label="撮る長さ">
-    <button class="chip" data-len="2" aria-pressed="false">2秒</button>
-    <button class="chip" data-len="5" aria-pressed="true">5秒</button>
-  </div>
   <div class="camshape" role="group" aria-label="撮る形">
     <button class="chip" data-cam="v" aria-pressed="true">縦長で撮る</button>
     <button class="chip" data-cam="h" aria-pressed="false">横長で撮る</button>
@@ -184,6 +184,7 @@ h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
   <section>
     <div class="sheet-h"><h2>この日のクリップ</h2><span class="count" id="count"></span></div>
     <div id="grid"></div>
+    <button class="longbtn" id="longBtn" hidden></button>
     <div class="empty" id="empty">まだクリップがありません。赤いボタンで最初の2秒を。</div>
   </section>
 
@@ -207,7 +208,7 @@ h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
     <button class="secondary" id="saveBtn" hidden>写真アプリに保存</button>
     <p class="note" id="saveNote" hidden></p>
     <button class="danger-link" id="cleanBtn" hidden>この日のクリップを消して空きをつくる</button>
-    <p class="note">書き出しは実際の長さぶん再生しながら作ります（10本×5秒なら約50秒）。画面を開いたまま待ってください。</p>
+    <p class="note">書き出しは実際の長さぶん再生しながら作ります（10本なら約20秒）。画面を開いたまま待ってください。</p>
   </section>
 
   <div class="foot">
@@ -232,6 +233,11 @@ h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
     <div class="sheet-h"><h2 id="sheetTitle">クリップ</h2><span class="count" id="sheetTime"></span></div>
     <video id="pv" playsinline loop controls></video>
+    <div class="trim" id="trim" hidden>
+      <label for="trimRange"><span>使う2秒の位置</span><span class="count" id="trimLbl"></span></label>
+      <input type="range" id="trimRange" min="0" max="0" step="0.05" value="0">
+      <p class="note">このクリップは<span id="trimTotal"></span>秒あります。スライダーで使う2秒を選んで「保存」を押してください。元の動画は残るので、あとで選び直せます。</p>
+    </div>
     <div class="field"><label for="tsInput">撮った日時</label><input type="datetime-local" id="tsInput" step="60"></div>
     <div class="actions">
       <button class="secondary" id="closeBtn">閉じる</button>
@@ -309,6 +315,9 @@ function render(){
   $('#empty').hidden = cs.length > 0;
   $('#buildBtn').disabled = !cs.length || building;
   $('#playBtn').disabled = !cs.length || building;
+  const longs = cs.filter(c => c.dur > 2.05);
+  $('#longBtn').hidden = !longs.length;
+  if (longs.length) { $('#longBtn').textContent = `2秒より長いクリップ${longs.length}本を、まとめて真ん中の2秒にする`; $('#longBtn').dataset.armed = ''; }
   const counts = {}; state.clips.forEach(c => counts[c.day] = (counts[c.day]||0) + 1);
   const keys = Object.keys(counts).sort().reverse(), days = $('#days'); days.innerHTML = '';
   if (keys.length > 1 || (keys.length === 1 && keys[0] !== state.day)) keys.forEach(k => {
@@ -373,12 +382,10 @@ function pickMime(){
 const vf = $('#vf');
 let stream = null, facing = ls.get('facing') || 'environment', shooting = false;
 let camShape = ls.get('camShape') === 'h' ? 'h' : 'v';
-let recLen = ls.get('recLen') === '2' ? 2 : 5;
+const recLen = 2;
 function syncLen(){
-  document.querySelectorAll('[data-len]').forEach(b => b.setAttribute('aria-pressed', +b.dataset.len === recLen));
   $('#recHint').textContent = `押すと${recLen}秒だけ録画して、自動で止まります。`;
 }
-document.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { if (shooting) return; recLen = +b.dataset.len; ls.set('recLen', String(recLen)); syncLen(); });
 function syncCamShape(){
   document.querySelectorAll('[data-cam]').forEach(b => b.setAttribute('aria-pressed', b.dataset.cam === camShape));
   document.querySelector('.vf').classList.toggle('land', camShape === 'h');
@@ -486,24 +493,64 @@ $('#pickInput').onchange = async e => {
   toast(n ? `${n}本 追加しました` : '追加できませんでした');
 };
 
+/* ---------- cut long clips down to 2 seconds (originals are kept, so this can be redone per clip) ---------- */
+$('#longBtn').onclick = async () => {
+  const b = $('#longBtn'); if (b.disabled) return;
+  if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'もう一度押すと2秒にします（あとで1本ずつ選び直せます）'; return; }
+  const longs = dayClips().filter(c => c.dur > 2.05); b.disabled = true; let n = 0;
+  for (const c of longs) {
+    toast(`2秒にしています… ${++n}/${longs.length}`, true);
+    const url = URL.createObjectURL(c.blob);
+    try { const total = c.start + c.dur, start = Math.max(0, c.start + (c.dur - 2) / 2);
+      const r = await snapAt(url, start);
+      await saveClip({ ...c, start, dur: 2, thumb: r.thumb || c.thumb }); } catch(e){}
+    URL.revokeObjectURL(url);
+  }
+  b.disabled = false; resetResult(); render(); toast(`${n}本を2秒にしました`);
+};
+
 /* ---------- clip sheet ---------- */
 const pv = $('#pv'); let sheet = null, pvRaf = 0;
-function openSheet(c){
-  sheet = { clip: c, url: URL.createObjectURL(c.blob) };
+const trimRange = $('#trimRange');
+async function openSheet(c){
+  sheet = { clip: c, url: URL.createObjectURL(c.blob), start: c.start, dur: c.dur, total: 0 };
   $('#sheetTime').textContent = `${hm(c.ts)} · ${c.dur.toFixed(1)}s`;
   $('#tsInput').value = toLocalInput(c.ts);
   $('#delBtn').dataset.armed = ''; $('#delBtn').textContent = 'このクリップを削除';
-  pv.src = sheet.url; pv.currentTime = c.start; pv.play().catch(() => {});
+  $('#trim').hidden = true;
+  $('#sheet').hidden = false;
+  pv.src = sheet.url; await once(pv, 'loadedmetadata', 5000);
+  if (!sheet) return;
+  const total = isFinite(pv.duration) && pv.duration > 0 ? pv.duration : c.start + c.dur;
+  sheet.total = total;
+  // clips longer than 2 seconds (e.g. the 5-second ones) can be cut down to 2
+  if (total > 2.1) {
+    sheet.dur = 2;
+    if (c.dur > 2.05) sheet.start = Math.max(0, (total - 2) / 2); // first time: take the middle (steadier than the start)
+    sheet.start = Math.min(sheet.start, total - 2);
+    trimRange.max = (total - 2).toFixed(2); trimRange.value = sheet.start;
+    $('#trimTotal').textContent = total.toFixed(1); $('#trimLbl').textContent = `${sheet.start.toFixed(1)}〜${(sheet.start + 2).toFixed(1)}秒`;
+    $('#trim').hidden = false;
+  }
+  pv.currentTime = sheet.start; pv.play().catch(() => {});
   cancelAnimationFrame(pvRaf);
-  const loop = () => { if (!sheet) return; if (pv.currentTime >= c.start + c.dur - 0.03 || pv.currentTime < c.start - 0.2) pv.currentTime = c.start; pvRaf = requestAnimationFrame(loop); };
+  const loop = () => { if (!sheet) return; if (pv.currentTime >= sheet.start + sheet.dur - 0.03 || pv.currentTime < sheet.start - 0.2) pv.currentTime = sheet.start; pvRaf = requestAnimationFrame(loop); };
   pvRaf = requestAnimationFrame(loop);
   $('#sheet').hidden = false;
 }
 function closeSheet(){ cancelAnimationFrame(pvRaf); pv.pause(); pv.removeAttribute('src'); pv.load(); if (sheet) URL.revokeObjectURL(sheet.url); sheet = null; $('#sheet').hidden = true; }
 $('#closeBtn').onclick = closeSheet;
+trimRange.oninput = () => {
+  if (!sheet) return; sheet.start = +trimRange.value;
+  $('#trimLbl').textContent = `${sheet.start.toFixed(1)}〜${(sheet.start + 2).toFixed(1)}秒`;
+  pv.currentTime = sheet.start;
+};
 $('#okBtn').onclick = async () => {
   const v = $('#tsInput').value; let ts = v ? new Date(v).getTime() : sheet.clip.ts; if (!isFinite(ts)) ts = sheet.clip.ts;
-  const c = { ...sheet.clip, ts, day: dayKey(ts) };
+  const c = { ...sheet.clip, ts, day: dayKey(ts), start: sheet.start, dur: sheet.dur };
+  if (c.start !== sheet.clip.start || c.dur !== sheet.clip.dur) { // new cut → new thumbnail
+    pv.pause(); try { const r = await snapAt(sheet.url, c.start); if (r.thumb) c.thumb = r.thumb; } catch(e){}
+  }
   try { await saveClip(c); state.day = c.day; resetResult(); render(); toast('保存しました'); } catch(e){ toast('保存できませんでした'); }
   closeSheet();
 };
