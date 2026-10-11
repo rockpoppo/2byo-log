@@ -74,7 +74,21 @@ h1 span{color:var(--rec)}
 .shutter.busy i{transform:scale(.55);border-radius:10px}
 .shutter:disabled{opacity:.4}
 .hint{font-size:12px;color:var(--muted);margin:-6px 0 0;text-align:center}
-.toast{align-self:center;margin:0;background:var(--tape);color:var(--tape-ink);font-family:var(--f-mono);font-weight:700;font-size:13px;padding:3px 12px;border-radius:4px}
+.toast{align-self:center;margin:0;background:var(--tape);color:var(--tape-ink);font-family:var(--f-mono);font-weight:700;font-size:13px;padding:3px 4px 3px 12px;border-radius:4px;display:flex;align-items:center;gap:10px;min-height:30px}
+.toast:not(.has-act){padding-right:12px}
+.toast button{border:0;background:var(--tape-ink);color:var(--tape);font:inherit;font-size:12px;border-radius:3px;padding:3px 10px;min-height:26px}
+/* delete badge on each clip */
+.clipwrap .x{position:absolute;right:3px;top:3px;width:26px;height:26px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:15px;line-height:26px;padding:0;display:flex;align-items:center;justify-content:center}
+.clipwrap{position:relative;margin-block:6px}
+.clipwrap.land{grid-column:span 2;align-self:center}
+.clipwrap .clip{margin:0;width:100%}
+/* delete confirmation */
+.confirm{position:fixed;inset:0;z-index:20;background:rgba(5,6,5,.8);display:flex;align-items:center;justify-content:center;padding:16px}
+.confirm .box{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;width:100%;max-width:340px;display:flex;flex-direction:column;gap:14px;align-items:center;text-align:center}
+.confirm img{max-width:60%;max-height:30vh;border-radius:4px}
+.confirm p{margin:0;font-size:15px;font-weight:700}
+.confirm .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%}
+.confirm .del{height:46px;border-radius:8px;border:1.5px solid var(--rec);background:transparent;color:var(--rec);font-weight:700}
 
 .sheet-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
@@ -85,7 +99,7 @@ h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
 #grid:empty{display:none}
 .clip{position:relative;aspect-ratio:9/16;max-width:100%;border:0;padding:0;background:#2a2d28;border-radius:2px;overflow:hidden;margin-block:6px}
 .clip img{width:100%;height:100%;object-fit:cover;display:block}
-.clip.land{grid-column:span 2;aspect-ratio:16/9;align-self:center}
+.clipwrap.land .clip{aspect-ratio:16/9}
 .player{position:relative;width:100%;max-width:100%;aspect-ratio:9/16;max-height:62vh;margin:0 auto;background:var(--frame);border-radius:8px;overflow:hidden}
 .player.land{aspect-ratio:16/9}
 .player video{width:100%;height:100%;object-fit:contain;display:block}
@@ -149,6 +163,10 @@ h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
     <div class="flash" id="flash"></div>
   </div>
 
+  <div class="camshape" role="group" aria-label="撮る長さ">
+    <button class="chip" data-len="2" aria-pressed="false">2秒</button>
+    <button class="chip" data-len="5" aria-pressed="true">5秒</button>
+  </div>
   <div class="camshape" role="group" aria-label="撮る形">
     <button class="chip" data-cam="v" aria-pressed="true">縦長で撮る</button>
     <button class="chip" data-cam="h" aria-pressed="false">横長で撮る</button>
@@ -157,11 +175,11 @@ h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
   <div class="controls">
     <label class="btn side" for="pickInput" aria-label="写真アプリの動画から追加">動画<br>追加</label>
     <input id="pickInput" type="file" accept="video/*" multiple hidden>
-    <button class="shutter" id="shutter" aria-label="2秒撮る"><i></i></button>
+    <button class="shutter" id="shutter" aria-label="撮る"><i></i></button>
     <button class="side" id="flipBtn" aria-label="カメラを切り替え">切替</button>
   </div>
-  <p class="hint">押すと2秒だけ録画して、自動で止まります。</p>
-  <p class="toast" id="toast" role="status" hidden></p>
+  <p class="hint" id="recHint">押すと5秒だけ録画して、自動で止まります。</p>
+  <div class="toast" id="toast" role="status" hidden><span id="toastMsg"></span><button id="toastAct" hidden></button></div>
 
   <section>
     <div class="sheet-h"><h2>この日のクリップ</h2><span class="count" id="count"></span></div>
@@ -189,13 +207,24 @@ h2{font-size:15px;margin:0;font-weight:700;letter-spacing:.04em}
     <button class="secondary" id="saveBtn" hidden>写真アプリに保存</button>
     <p class="note" id="saveNote" hidden></p>
     <button class="danger-link" id="cleanBtn" hidden>この日のクリップを消して空きをつくる</button>
-    <p class="note">書き出しは実際の長さぶん再生しながら作ります（10クリップで約20秒）。画面を開いたまま待ってください。</p>
+    <p class="note">書き出しは実際の長さぶん再生しながら作ります（10本×5秒なら約50秒）。画面を開いたまま待ってください。</p>
   </section>
 
   <div class="foot">
     <div class="bar"><i id="usageFill"></i></div>
     <span id="usageText">—</span>
     <span>動画はこのスマホの中だけに保存され、どこにも送信されません。ホーム画面のアイコンから開いてください（Safariで開くと別の保存場所になります）。</span>
+  </div>
+</div>
+
+<div class="confirm" id="confirm" hidden>
+  <div class="box" role="alertdialog" aria-modal="true" aria-labelledby="cfMsg">
+    <img id="cfImg" alt="">
+    <p id="cfMsg">このクリップを削除しますか？</p>
+    <div class="row2">
+      <button class="primary" id="cfNo">やめる</button>
+      <button class="del" id="cfYes">削除する</button>
+    </div>
   </div>
 </div>
 
@@ -265,13 +294,17 @@ function render(){
   $('#dayLabel').textContent = `${d.getFullYear()}.${pad(d.getMonth()+1)}.${pad(d.getDate())} ${WD[d.getDay()]}`;
   $('#dayMeta').textContent = cs.length ? `${cs.length}クリップ · ${cs.reduce((s,c) => s + c.dur, 0).toFixed(0)}秒` : 'クリップなし';
   $('#nextDay').disabled = state.day >= dayKey(Date.now());
-  $('#count').textContent = cs.length ? `${cs.length} × 2s` : '';
+  $('#count').textContent = cs.length ? `${cs.length}本` : '';
   const grid = $('#grid'); grid.innerHTML = '';
   cs.forEach(c => {
-    const b = document.createElement('button'); b.className = isLand(c) ? 'clip land' : 'clip'; b.setAttribute('aria-label', `${hm(c.ts)}のクリップ`);
+    const b = document.createElement('button'); b.className = 'clip'; b.setAttribute('aria-label', `${hm(c.ts)}のクリップ`);
     const img = document.createElement('img'); img.alt = ''; if (c.thumb) img.src = c.thumb;
     const t = document.createElement('span'); t.className = 't'; t.textContent = hm(c.ts);
-    b.append(img, t); b.onclick = () => openSheet(c); grid.append(b);
+    b.append(img, t); b.onclick = () => openSheet(c);
+    const wrap = document.createElement('div'); wrap.className = isLand(c) ? 'clipwrap land' : 'clipwrap';
+    const x = document.createElement('button'); x.className = 'x'; x.textContent = '×'; x.setAttribute('aria-label', `${hm(c.ts)}のクリップを削除`);
+    x.onclick = e => { e.stopPropagation(); askDelete(c); };
+    wrap.append(b, x); grid.append(wrap);
   });
   $('#empty').hidden = cs.length > 0;
   $('#buildBtn').disabled = !cs.length || building;
@@ -288,7 +321,30 @@ function shiftDay(n){ const d = keyToDate(state.day); d.setDate(d.getDate()+n); 
 $('#prevDay').onclick = () => shiftDay(-1);
 $('#nextDay').onclick = () => shiftDay(1);
 let toastT;
-function toast(msg, sticky){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); if (!sticky) toastT = setTimeout(() => t.hidden = true, 2400); }
+function toast(msg, sticky, act, ms){
+  const t = $('#toast'), a = $('#toastAct'); $('#toastMsg').textContent = msg; t.hidden = false;
+  a.hidden = !act; t.classList.toggle('has-act', !!act);
+  if (act) { a.textContent = act.label; a.onclick = () => { t.hidden = true; act.fn(); }; }
+  clearTimeout(toastT); if (!sticky) toastT = setTimeout(() => t.hidden = true, ms || 2400);
+}
+/* deleting: ask first (cancel is the big default button), then allow undo for 8 seconds */
+let cfClip = null, cfArmedAt = 0;
+function askDelete(c){
+  cfClip = c; $('#cfImg').src = c.thumb || ''; $('#cfImg').hidden = !c.thumb;
+  $('#cfMsg').textContent = `${hm(c.ts)} のクリップを削除しますか？`;
+  $('#confirm').hidden = false; cfArmedAt = performance.now();
+}
+$('#cfNo').onclick = () => { $('#confirm').hidden = true; cfClip = null; };
+$('#confirm').onclick = e => { if (e.target.id === 'confirm') $('#cfNo').onclick(); };
+$('#cfYes').onclick = async () => {
+  if (!cfClip || performance.now() - cfArmedAt < 400) return; // ignore a double-tap that carried over
+  const c = cfClip; cfClip = null; $('#confirm').hidden = true;
+  try { await removeClip(c); } catch(e){ toast('削除できませんでした'); return; }
+  resetResult(); render();
+  toast(`${hm(c.ts)} を削除しました`, false, { label: '元に戻す', fn: async () => {
+    try { await saveClip(c); state.day = c.day; resetResult(); render(); toast('元に戻しました'); } catch(e){ toast('戻せませんでした'); }
+  } }, 8000);
+};
 
 /* ---------- helpers ---------- */
 function once(el, ev, ms = 4000){ return new Promise(res => { let t; const f = () => { clearTimeout(t); el.removeEventListener(ev, f); res(true); };
@@ -317,6 +373,12 @@ function pickMime(){
 const vf = $('#vf');
 let stream = null, facing = ls.get('facing') || 'environment', shooting = false;
 let camShape = ls.get('camShape') === 'h' ? 'h' : 'v';
+let recLen = ls.get('recLen') === '2' ? 2 : 5;
+function syncLen(){
+  document.querySelectorAll('[data-len]').forEach(b => b.setAttribute('aria-pressed', +b.dataset.len === recLen));
+  $('#recHint').textContent = `押すと${recLen}秒だけ録画して、自動で止まります。`;
+}
+document.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { if (shooting) return; recLen = +b.dataset.len; ls.set('recLen', String(recLen)); syncLen(); });
 function syncCamShape(){
   document.querySelectorAll('[data-cam]').forEach(b => b.setAttribute('aria-pressed', b.dataset.cam === camShape));
   document.querySelector('.vf').classList.toggle('land', camShape === 'h');
@@ -365,16 +427,16 @@ $('#shutter').onclick = async () => {
   let rec; try { rec = new MediaRecorder(src, mime ? { mimeType: mime, videoBitsPerSecond: land ? 6e6 : 4e6 } : {}); } catch(e){ rec = new MediaRecorder(src); }
   const chunks = []; rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
   const stopped = new Promise(r => rec.onstop = r);
-  const ts = Date.now(), mirror = facing === 'user';
+  const ts = Date.now(), mirror = facing === 'user', len = recLen;
   let thumb = '';
   rec.start();
   const t0 = performance.now(); $('#recTc').hidden = false; $('#recTc').classList.add('on');
   await new Promise(res => { const tick = () => {
-    const t = Math.min(2, (performance.now() - t0) / 1000);
+    const t = Math.min(len, (performance.now() - t0) / 1000);
     if (land) coverDraw(cg, vf, cc.width, cc.height);
-    $('#recbar').style.width = `${t / 2 * 100}%`; $('#recTc').textContent = `${t.toFixed(1)}s`;
+    $('#recbar').style.width = `${t / len * 100}%`; $('#recTc').textContent = `${t.toFixed(1)}s`;
     if (!thumb && t > 0.9) thumb = land ? thumbFrom(cc, false, true) : thumbFrom(vf, mirror);
-    if (t >= 2) return res(); requestAnimationFrame(tick); }; tick(); });
+    if (t >= len) return res(); requestAnimationFrame(tick); }; tick(); });
   rec.stop(); await stopped;
   $('#recbar').style.width = '0'; $('#recTc').hidden = true; $('#recTc').classList.remove('on');
   const f = $('#flash'); f.classList.add('go'); requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove('go')));
@@ -382,8 +444,8 @@ $('#shutter').onclick = async () => {
   if (land) src.getVideoTracks().forEach(t => t.stop());
   if (!thumb) thumb = land ? thumbFrom(cc, false, true) : thumbFrom(vf, mirror);
   const w = land ? cc.width : (vf.videoWidth || 1080), h = land ? cc.height : (vf.videoHeight || 1920);
-  const clip = { id: newId(), ts, day: dayKey(ts), start: 0, dur: 2, thumb, blob, w, h };
-  try { await saveClip(clip); state.day = clip.day; resetResult(); render(); toast(`${hm(ts)} 保存しました`); }
+  const clip = { id: newId(), ts, day: dayKey(ts), start: 0, dur: len, thumb, blob, w, h };
+  try { await saveClip(clip); state.day = clip.day; resetResult(); render(); toast(`${hm(ts)} 保存しました`, false, { label: '削除', fn: () => askDelete(clip) }, 6000); }
   catch(e){ toast('保存できませんでした。空き容量を確認してください。'); }
   shooting = false; $('#shutter').classList.remove('busy');
 };
@@ -393,7 +455,7 @@ const av = $('#av');
 async function snapAt(url, start){
   av.src = url; await once(av, 'loadedmetadata', 8000);
   let dur = av.duration; if (!isFinite(dur) || dur <= 0) dur = 2;
-  const s = start == null ? Math.min(0.3, Math.max(0, dur - 2)) : start;
+  const s = start == null ? Math.min(0.3, Math.max(0, dur - recLen)) : start;
   av.currentTime = s; await once(av, 'seeked', 2500);
   let thumb = '';
   const vw = av.videoWidth || 1080, vh = av.videoHeight || 1920, land = vw > vh;
@@ -416,7 +478,7 @@ $('#pickInput').onchange = async e => {
     toast(files.length > 1 ? `追加中… ${n+1}/${files.length}` : '追加中…', true);
     const url = URL.createObjectURL(f);
     try { const r = await snapAt(url, null); const ts = f.lastModified || Date.now();
-      last = { id: newId(), ts, day: dayKey(ts), start: r.start, dur: Math.min(2, r.dur), thumb: r.thumb, blob: f, w: r.w, h: r.h };
+      last = { id: newId(), ts, day: dayKey(ts), start: r.start, dur: Math.min(recLen, r.dur), thumb: r.thumb, blob: f, w: r.w, h: r.h };
       await saveClip(last); n++; } catch(err){}
     URL.revokeObjectURL(url);
   }
@@ -595,7 +657,7 @@ $('#cleanBtn').onclick = async () => {
 
 /* ---------- boot ---------- */
 (async () => {
-  syncCamShape();
+  syncCamShape(); syncLen();
   render();
   idb = await openDB();
   state.clips = await getAll(); render(); refreshUsage();

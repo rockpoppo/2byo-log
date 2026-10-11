@@ -1,5 +1,5 @@
 // Offline shell for 2秒ログ. Only the app's own files are cached; videos never pass through here.
-const CACHE = 'two-sec-log-v4';
+const CACHE = 'two-sec-log-v6';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
